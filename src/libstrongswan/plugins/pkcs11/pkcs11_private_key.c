@@ -496,6 +496,116 @@ static pkcs11_library_t* find_lib_by_keyid(chunk_t keyid, int *slot,
 }
 
 /**
+ * Find the PKCS#11 lib and CKA_ID of the cert object of a given subjectKeyIdentifier
+ */
+static pkcs11_library_t* find_lib_and_keyid_by_ski(chunk_t keyid_chunk, chunk_t *ckaid, int *slot)
+{
+	pkcs11_manager_t *manager;
+	enumerator_t *enumerator;
+	identification_t *keyid;
+	pkcs11_library_t *p11, *found = NULL;
+	CK_OBJECT_CLASS class = CKO_CERTIFICATE;
+	CK_CERTIFICATE_TYPE type = CKC_X_509;
+	CK_SLOT_ID current;
+	linked_list_t *raw;
+	certificate_t *cert;
+	struct {
+		chunk_t value;
+		chunk_t ckaid;
+	} *entry;
+
+	manager = lib->get(lib, "pkcs11-manager");
+	if (!manager)
+	{
+		return NULL;
+	}
+
+	keyid = identification_create_from_encoding(ID_KEY_ID, keyid_chunk);
+
+	enumerator = manager->create_token_enumerator(manager);
+	while (enumerator->enumerate(enumerator, &p11, &current))
+	{
+		/* look for a cert, it is usually readable without login */
+		CK_ATTRIBUTE tmpl[] = {
+			{CKA_CLASS, &class, sizeof(class)},
+			{CKA_CERTIFICATE_TYPE, &type, sizeof(type)},
+		};
+		CK_OBJECT_HANDLE object;
+		CK_SESSION_HANDLE session;
+		CK_RV rv;
+		enumerator_t *certs;
+		CK_ATTRIBUTE attr[] = {
+			{CKA_VALUE, NULL, 0},
+			{CKA_ID, NULL, 0},
+		};
+
+		rv = p11->f->C_OpenSession(current, CKF_SERIAL_SESSION, NULL, NULL,
+								   &session);
+		if (rv != CKR_OK)
+		{
+			DBG1(DBG_CFG, "opening PKCS#11 session failed: %N",
+				 ck_rv_names, rv);
+			continue;
+		}
+
+		/* store result in a temporary list, avoid recursive operation */
+		raw = linked_list_create();
+
+		certs = p11->create_object_enumerator(p11, session,
+											 tmpl, countof(tmpl), attr, countof(attr));
+		while (certs->enumerate(certs, &object))
+		{
+			entry = malloc(sizeof(*entry));
+			entry->value = chunk_clone(
+								chunk_create(attr[0].pValue, attr[0].ulValueLen));
+			entry->ckaid = chunk_clone(
+								chunk_create(attr[1].pValue, attr[1].ulValueLen));
+			raw->insert_last(raw, entry);
+		}
+		certs->destroy(certs);
+
+		while (raw->remove_first(raw, (void**)&entry) == SUCCESS)
+		{
+			cert = lib->creds->create(lib->creds, CRED_CERTIFICATE, CERT_X509,
+							BUILD_BLOB_ASN1_DER, entry->value,
+							BUILD_END);
+			if (cert)
+			{
+				DBG1(DBG_CFG, "found cert with keyid '%#B' on PKCS#11 token '%s':%d",
+					 &entry->ckaid, p11->get_name(p11), current);
+
+				if (cert->has_subject(cert, keyid))
+				{
+					DBG1(DBG_CFG, "cert matches the subjectKeyIdentifier we were looking for");
+					*ckaid = chunk_clone(entry->ckaid);
+					found = p11;
+					*slot = current;
+				}
+			}
+			else
+			{
+				DBG1(DBG_CFG, "parsing cert with keyid '%#B' on PKCS#11 token '%s':%d failed",
+					&entry->ckaid, p11->get_name(p11), current);
+			}
+			cert->destroy(cert);
+			chunk_free(&entry->value);
+			chunk_free(&entry->ckaid);
+			free(entry);
+		}
+		raw->destroy(raw);
+
+		p11->f->C_CloseSession(session);
+		if (found)
+		{
+			break;
+		}
+	}
+	enumerator->destroy(enumerator);
+	keyid->destroy(keyid);
+	return found;
+}
+
+/**
  * Find the key on the token
  */
 static bool find_key(private_pkcs11_private_key_t *this, chunk_t keyid)
@@ -645,7 +755,7 @@ pkcs11_private_key_t *pkcs11_private_key_connect(key_type_t type, va_list args)
 {
 	private_pkcs11_private_key_t *this;
 	char *module = NULL;
-	chunk_t keyid = chunk_empty;
+	chunk_t keyid = chunk_empty, ckaid = chunk_empty;
 	int slot = -1;
 	CK_RV rv;
 
@@ -713,6 +823,10 @@ pkcs11_private_key_t *pkcs11_private_key_connect(key_type_t type, va_list args)
 		}
 		if (!this->lib)
 		{
+			this->lib = find_lib_and_keyid_by_ski(keyid, &ckaid, &slot);
+		}
+		if (!this->lib)
+		{
 			DBG1(DBG_CFG, "no PKCS#11 module found having a keyid %#B", &keyid);
 			free(this);
 			return NULL;
@@ -738,8 +852,17 @@ pkcs11_private_key_t *pkcs11_private_key_connect(key_type_t type, va_list args)
 		return NULL;
 	}
 
+	if (ckaid.ptr)
+	{
+		DBG1(DBG_CFG, "using the CKA_ID '%#B' for key with id '%#B'",
+			 &ckaid, &keyid);
+		keyid = ckaid;
+	}
+
 	if (!find_key(this, keyid))
 	{
+		DBG1(DBG_CFG, "did not find the key with keyid '%#B'",
+			 &keyid);
 		destroy(this);
 		return NULL;
 	}
@@ -750,8 +873,8 @@ pkcs11_private_key_t *pkcs11_private_key_connect(key_type_t type, va_list args)
 		this->pubkey = find_pubkey_in_certs(this, keyid);
 		if (!this->pubkey)
 		{
-			DBG1(DBG_CFG, "no public key or certificate found for private key "
-				 "on '%s':%d", module, slot);
+			DBG1(DBG_CFG, "no public key or certificate found for private key (keyid '%#B') "
+				 "on '%s':%d", &keyid, module, slot);
 			destroy(this);
 			return NULL;
 		}
