@@ -26,6 +26,7 @@ import android.os.Bundle;
 import android.security.KeyChain;
 import android.security.KeyChainAliasCallback;
 import android.security.KeyChainException;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.app.AppCompatDialogFragment;
@@ -63,14 +64,14 @@ import org.strongswan.android.logic.TrustedCertificateManager;
 import org.strongswan.android.security.TrustedCertificateEntry;
 import org.strongswan.android.ui.adapter.CertificateIdentitiesAdapter;
 import org.strongswan.android.ui.widget.TextInputLayoutHelper;
+import org.strongswan.android.utils.Constants;
 
 import java.security.cert.X509Certificate;
+import java.util.UUID;
 
 public class VpnProfileDetailActivity extends AppCompatActivity
 {
 	private static final int SELECT_TRUSTED_CERTIFICATE = 0;
-	private static final int MTU_MIN = 1280;
-	private static final int MTU_MAX = 1500;
 
 	private VpnProfileDataSource mDataSource;
 	private Long mId;
@@ -453,6 +454,10 @@ public class VpnProfileDetailActivity extends AppCompatActivity
 			if (mProfile != null)
 			{
 				updateProfileData();
+				if (mProfile.getUUID() == null)
+				{
+					mProfile.setUUID(UUID.randomUUID());
+				}
 				mDataSource.updateVpnProfile(mProfile);
 			}
 			else
@@ -461,6 +466,10 @@ public class VpnProfileDetailActivity extends AppCompatActivity
 				updateProfileData();
 				mDataSource.insertProfile(mProfile);
 			}
+			Intent intent = new Intent(Constants.VPN_PROFILES_CHANGED);
+			intent.putExtra(Constants.VPN_PROFILES_SINGLE, mProfile.getId());
+			LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+
 			setResult(RESULT_OK, new Intent().putExtra(VpnProfileDataSource.KEY_ID, mProfile.getId()));
 			finish();
 		}
@@ -496,14 +505,12 @@ public class VpnProfileDetailActivity extends AppCompatActivity
 			showCertificateAlert();
 			valid = false;
 		}
-		Integer mtu = getInteger(mMTU);
-		if (mtu != null && (mtu < MTU_MIN || mtu > MTU_MAX))
+		if (!validateInteger(mMTU, Constants.MTU_MIN, Constants.MTU_MAX))
 		{
-			mMTUWrap.setError(String.format(getString(R.string.alert_text_out_of_range), MTU_MIN, MTU_MAX));
+			mMTUWrap.setError(String.format(getString(R.string.alert_text_out_of_range), Constants.MTU_MIN, Constants.MTU_MAX));
 			valid = false;
 		}
-		Integer port = getInteger(mPort);
-		if (port != null && (port < 1 || port > 65535))
+		if (!validateInteger(mPort, 1, 65535))
 		{
 			mPortWrap.setError(String.format(getString(R.string.alert_text_out_of_range), 1, 65535));
 			valid = false;
@@ -569,8 +576,8 @@ public class VpnProfileDetailActivity extends AppCompatActivity
 				mRemoteId.setText(mProfile.getRemoteId());
 				mMTU.setText(mProfile.getMTU() != null ? mProfile.getMTU().toString() : null);
 				mPort.setText(mProfile.getPort() != null ? mProfile.getPort().toString() : null);
-				mBlockIPv4.setChecked(mProfile.getSplitTunneling() != null ? (mProfile.getSplitTunneling() & VpnProfile.SPLIT_TUNNELING_BLOCK_IPV4) != 0 : false);
-				mBlockIPv6.setChecked(mProfile.getSplitTunneling() != null ? (mProfile.getSplitTunneling() & VpnProfile.SPLIT_TUNNELING_BLOCK_IPV6) != 0 : false);
+				mBlockIPv4.setChecked(mProfile.getSplitTunneling() != null && (mProfile.getSplitTunneling() & VpnProfile.SPLIT_TUNNELING_BLOCK_IPV4) != 0);
+				mBlockIPv6.setChecked(mProfile.getSplitTunneling() != null && (mProfile.getSplitTunneling() & VpnProfile.SPLIT_TUNNELING_BLOCK_IPV6) != 0);
 				useralias = mProfile.getUserCertificateAlias();
 				local_id = mProfile.getLocalId();
 				alias = mProfile.getCertificateAlias();
@@ -633,6 +640,31 @@ public class VpnProfileDetailActivity extends AppCompatActivity
 		}
 	}
 
+	/**
+	 * Check that the value in the given text box is a valid integer in the given range
+	 *
+	 * @param view text box (numeric entry assumed)
+	 * @param min minimum value (inclusive)
+	 * @param max maximum value (inclusive)
+	 */
+	private boolean validateInteger(EditText view, Integer min, Integer max)
+	{
+		String value = view.getText().toString().trim();
+		try
+		{
+			if (value.isEmpty())
+			{
+				return true;
+			}
+			Integer val = Integer.valueOf(value);
+			return min <= val && val <= max;
+		}
+		catch (NumberFormatException e)
+		{
+			return false;
+		}
+	}
+
 	private class SelectUserCertOnClickListener implements OnClickListener, KeyChainAliasCallback
 	{
 		@Override
@@ -663,11 +695,7 @@ public class VpnProfileDetailActivity extends AppCompatActivity
 						}
 					});
 				}
-				catch (KeyChainException e)
-				{
-					e.printStackTrace();
-				}
-				catch (InterruptedException e)
+				catch (KeyChainException | InterruptedException e)
 				{
 					e.printStackTrace();
 				}
@@ -699,11 +727,7 @@ public class VpnProfileDetailActivity extends AppCompatActivity
 			{
 				chain = KeyChain.getCertificateChain(mContext, mAlias);
 			}
-			catch (KeyChainException e)
-			{
-				e.printStackTrace();
-			}
-			catch (InterruptedException e)
+			catch (KeyChainException | InterruptedException e)
 			{
 				e.printStackTrace();
 			}

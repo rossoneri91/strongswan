@@ -29,20 +29,24 @@ gcrypt)
 printf-builtin)
 	CONFIG="--with-printf-hooks=builtin"
 	;;
-all)
+all|coverage)
 	CONFIG="--enable-all --disable-android-dns --disable-android-log
 			--disable-dumm --disable-kernel-pfroute --disable-keychain
-			--disable-lock-profiler --disable-padlock
+			--disable-lock-profiler --disable-padlock --disable-fuzzing
 			--disable-osx-attr --disable-tkm --disable-uci
 			--disable-systemd --disable-soup --disable-unwind-backtraces
 			--disable-svc --disable-dbghelp-backtraces --disable-socket-win
 			--disable-kernel-wfp --disable-kernel-iph --disable-winhttp"
 	# Ubuntu 14.04 does provide a too old libtss2-dev
-	CONFIG="$CONFIG --disable-aikpub2 --disable-tss-tss2"
+	CONFIG="$CONFIG --disable-tss-tss2"
 	# not enabled on the build server
 	CONFIG="$CONFIG --disable-af-alg"
-	# TODO: enable? perhaps via coveralls.io (cpp-coveralls)?
-	CONFIG="$CONFIG --disable-coverage"
+	if test "$TEST" != "coverage"; then
+		CONFIG="$CONFIG --disable-coverage"
+	else
+		# not actually required but configure checks for it
+		DEPS="$DEPS lcov"
+	fi
 	DEPS="$DEPS libcurl4-gnutls-dev libsoup2.4-dev libunbound-dev libldns-dev
 		  libmysqlclient-dev libsqlite3-dev clearsilver-dev libfcgi-dev
 		  libnm-glib-dev libnm-glib-vpn-dev libpcsclite-dev libpam0g-dev
@@ -56,7 +60,7 @@ win*)
 			--enable-constraints --enable-revocation --enable-pem --enable-pkcs1
 			--enable-pkcs8 --enable-x509 --enable-pubkey --enable-acert
 			--enable-eap-tnc --enable-eap-ttls --enable-eap-identity
-			--enable-updown --enable-ext-auth
+			--enable-updown --enable-ext-auth --enable-libipsec
 			--enable-tnccs-20 --enable-imc-attestation --enable-imv-attestation
 			--enable-imc-os --enable-imv-os --enable-tnc-imv --enable-tnc-imc
 			--enable-pki --enable-swanctl --enable-socket-win"
@@ -66,9 +70,15 @@ win*)
 	DEPS="gcc-mingw-w64-base"
 	case "$TEST" in
 	win64)
-		CONFIG="--host=x86_64-w64-mingw32 $CONFIG"
+		# headers on 12.04 are too old, so we only build the plugins here
+		CONFIG="--host=x86_64-w64-mingw32 $CONFIG --enable-dbghelp-backtraces
+				--enable-kernel-iph --enable-kernel-wfp --enable-winhttp"
 		DEPS="gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev $DEPS"
 		CC="x86_64-w64-mingw32-gcc"
+		# apply patch to MinGW headers
+		if test -z "$1"; then
+			sudo patch -f -p 4 -d /usr/share/mingw-w64/include < src/libcharon/plugins/kernel_wfp/mingw-w64-4.8.1.diff
+		fi
 		;;
 	win32)
 		CONFIG="--host=i686-w64-mingw32 $CONFIG"

@@ -17,6 +17,14 @@ before_script:
 script:
   - ./scripts/test.sh
 
+after_success:
+  if [ "$TEST" == "coverage" ]; then
+    bash <(curl -s https://codecov.io/bash);
+  fi
+
+after_failure:
+  - cat config.log
+
 env:
   global:
     - TESTS_REDUCED_KEYLENGTHS=yes
@@ -44,6 +52,8 @@ matrix:
     - compiler: gcc
       env: TEST=apidoc
     - compiler: gcc
+      env: TEST=coverage
+    - compiler: gcc
       env: TEST=win64 MONOLITHIC=yes
     # this does not work on 14.04 due to a missing @4 decoration for
     # TryAcquireSRWLockExclusive in MinGW 3.1.0
@@ -52,5 +62,4 @@ matrix:
       dist: precise
     - compiler: clang
       os: osx
-      osx_image: xcode7
       env: TEST=osx

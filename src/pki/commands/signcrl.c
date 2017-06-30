@@ -2,6 +2,9 @@
  * Copyright (C) 2010 Martin Willi
  * Copyright (C) 2010 revosec AG
  *
+ * Copyright (C) 2017 Andreas Steffen
+ * HSR Hochschule fuer Technik Rapperswil
+ *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
  * Free Software Foundation; either version 2 of the License, or (at your
@@ -58,16 +61,24 @@ static void revoked_destroy(revoked_t *revoked)
 	free(revoked);
 }
 
-/**
- * Filter for revoked enumerator
- */
-static bool filter(void *data, revoked_t **revoked, chunk_t *serial, void *p2,
-				   time_t *date, void *p3, crl_reason_t *reason)
+CALLBACK(filter, bool,
+	void *data, enumerator_t *orig, va_list args)
 {
-	*serial = (*revoked)->serial;
-	*date = (*revoked)->date;
-	*reason = (*revoked)->reason;
-	return TRUE;
+	revoked_t *revoked;
+	crl_reason_t *reason;
+	chunk_t *serial;
+	time_t *date;
+
+	VA_ARGS_VGET(args, serial, date, reason);
+
+	if (orig->enumerate(orig, &revoked))
+	{
+		*serial = revoked->serial;
+		*date = revoked->date;
+		*reason = revoked->reason;
+		return TRUE;
+	}
+	return FALSE;
 }
 
 /**
@@ -369,23 +380,27 @@ static int sign_crl()
 	}
 	else
 	{
-		crl_serial = chunk_from_chars(0x00);
+		if (!crl_serial.ptr)
+		{
+			crl_serial = chunk_from_chars(0x00);
+		}
 		lastenum = enumerator_create_empty();
 	}
 
-	/* remove superfluous leading zeros */
-	while (crl_serial.len > 1 && crl_serial.ptr[0] == 0x00 &&
-		  (crl_serial.ptr[1] & 0x80) == 0x00)
-	{
-		crl_serial = chunk_skip_zero(crl_serial);
+	if (!crl_serial.len || crl_serial.ptr[0] & 0x80)
+	{	/* add leading 0x00 to handle potential overflow if serial is encoded
+		 * incorrectly */
+		crl_serial = chunk_cat("cc", chunk_from_chars(0x00), crl_serial);
 	}
-	crl_serial = chunk_clone(crl_serial);
-
+	else
+	{
+		crl_serial = chunk_clone(crl_serial);
+	}
 	/* increment the serial number by one */
 	chunk_increment(crl_serial);
 
 	enumerator = enumerator_create_filter(list->create_enumerator(list),
-										  (void*)filter, NULL, NULL);
+										  filter, NULL, NULL);
 	crl = lib->creds->create(lib->creds, CRED_CERTIFICATE, CERT_X509_CRL,
 			BUILD_SIGNING_KEY, private, BUILD_SIGNING_CERT, ca,
 			BUILD_SERIAL, crl_serial,
@@ -457,7 +472,7 @@ static void __attribute__ ((constructor))reg()
 			{"help",		'h', 0, "show usage information"},
 			{"cacert",		'c', 1, "CA certificate file"},
 			{"cakey",		'k', 1, "CA private key file"},
-			{"cakeyid",		'x', 1, "keyid on smartcard of CA private key"},
+			{"cakeyid",		'x', 1, "smartcard or TPM CA private key object handle"},
 			{"lifetime",	'l', 1, "days the CRL gets a nextUpdate, default: 15"},
 			{"this-update",	'F', 1, "date/time the validity of the CRL starts"},
 			{"next-update",	'T', 1, "date/time the validity of the CRL ends"},

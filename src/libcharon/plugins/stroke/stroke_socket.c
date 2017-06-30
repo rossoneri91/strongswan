@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2011-2013 Tobias Brunner
  * Copyright (C) 2008 Martin Willi
- * Hochschule fuer Technik Rapperswil
+ * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -216,6 +216,7 @@ static void stroke_add_conn(private_stroke_socket_t *this, stroke_msg_t *msg)
 	DBG_OPT("  dpdtimeout=%d", msg->add_conn.dpd.timeout);
 	DBG_OPT("  dpdaction=%d", msg->add_conn.dpd.action);
 	DBG_OPT("  closeaction=%d", msg->add_conn.close_action);
+	DBG_OPT("  sha256_96=%s", msg->add_conn.sha256_96 ? "yes" : "no");
 	DBG_OPT("  mediation=%s", msg->add_conn.ikeme.mediation ? "yes" : "no");
 	DBG_OPT("  mediated_by=%s", msg->add_conn.ikeme.mediated_by);
 	DBG_OPT("  me_peerid=%s", msg->add_conn.ikeme.peerid);
