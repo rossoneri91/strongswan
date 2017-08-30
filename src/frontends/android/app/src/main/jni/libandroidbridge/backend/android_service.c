@@ -435,7 +435,7 @@ METHOD(listener_t, ike_updown, bool,
 {
 	/* this callback is only registered during initiation, so if the IKE_SA
 	 * goes down we assume some kind of authentication error, more specific
-	 * errors are catched in the alert() handler */
+	 * errors are caught in the alert() handler */
 	if (this->ike_sa == ike_sa && !up)
 	{
 		charonservice->update_status(charonservice,
@@ -737,11 +737,14 @@ static job_requeue_t initiate(private_android_service_t *this)
 	};
 	char *type, *server, *remote_id;
 	int port;
+	bool certreq;
 
 	server = this->settings->get_str(this->settings, "connection.server", NULL);
 	port = this->settings->get_int(this->settings, "connection.port",
 								   IKEV2_UDP_PORT);
-	ike_cfg = ike_cfg_create(IKEV2, TRUE, TRUE, "0.0.0.0",
+	certreq = this->settings->get_bool(this->settings, "connection.certreq",
+									   TRUE);
+	ike_cfg = ike_cfg_create(IKEV2, certreq, TRUE, "0.0.0.0",
 							 charon->socket->get_port(charon->socket, FALSE),
 							 server, port, FRAGMENTATION_YES, 0);
 	ike_cfg->add_proposal(ike_cfg, proposal_create_default(PROTO_IKE));

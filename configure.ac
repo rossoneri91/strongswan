@@ -19,7 +19,7 @@
 #  initialize & set some vars
 # ============================
 
-AC_INIT([strongSwan],[5.5.3])
+AC_INIT([strongSwan],[5.6.0])
 AM_INIT_AUTOMAKE(m4_esyscmd([
 	echo tar-ustar
 	echo subdir-objects
@@ -185,6 +185,7 @@ ARG_ENABL_SET([eap-sim],        [enable SIM authentication module for EAP.])
 ARG_ENABL_SET([eap-sim-file],   [enable EAP-SIM backend based on a triplet file.])
 ARG_ENABL_SET([eap-sim-pcsc],   [enable EAP-SIM backend based on a smartcard reader. Requires libpcsclite.])
 ARG_ENABL_SET([eap-aka],        [enable EAP AKA authentication module.])
+ARG_ENABL_SET([eap-aka-3gpp],   [enable EAP AKA backend implementing 3GPP MILENAGE algorithms in software.])
 ARG_ENABL_SET([eap-aka-3gpp2],  [enable EAP AKA backend implementing 3GPP2 algorithms in software. Requires libgmp.])
 ARG_ENABL_SET([eap-simaka-sql], [enable EAP-SIM/AKA backend based on a triplet/quintuplet SQL database.])
 ARG_ENABL_SET([eap-simaka-pseudonym], [enable EAP-SIM/AKA pseudonym storage plugin.])
@@ -246,6 +247,8 @@ ARG_ENABL_SET([imc-attestation],[enable IMC attestation module.])
 ARG_ENABL_SET([imv-attestation],[enable IMV attestation module.])
 ARG_ENABL_SET([imc-swid],       [enable IMC swid module.])
 ARG_ENABL_SET([imv-swid],       [enable IMV swid module.])
+ARG_ENABL_SET([imc-swima],      [enable IMC swima module.])
+ARG_ENABL_SET([imv-swima],      [enable IMV swima module.])
 ARG_ENABL_SET([imc-hcd],        [enable IMC hcd module.])
 ARG_ENABL_SET([imv-hcd],        [enable IMV hcd module.])
 ARG_ENABL_SET([tnc-ifmap],      [enable TNC IF-MAP module. Requires libxml])
@@ -421,7 +424,7 @@ if test x$eap_tls = xtrue -o x$eap_ttls = xtrue -o x$eap_peap = xtrue -o x$tnc_t
 	tls=true;
 fi
 
-if test x$imc_test = xtrue -o x$imv_test = xtrue -o x$imc_scanner = xtrue -o x$imv_scanner = xtrue -o x$imc_os = xtrue -o x$imv_os = xtrue -o x$imc_attestation = xtrue -o x$imv_attestation = xtrue -o x$imc_swid = xtrue -o x$imv_swid = xtrue -o x$imc_hcd = xtrue -o x$imv_hcd = xtrue; then
+if test x$imc_test = xtrue -o x$imv_test = xtrue -o x$imc_scanner = xtrue -o x$imv_scanner = xtrue -o x$imc_os = xtrue -o x$imv_os = xtrue -o x$imc_attestation = xtrue -o x$imv_attestation = xtrue -o x$imc_swid = xtrue -o x$imv_swid = xtrue -o x$imc_swima = xtrue -o x$imv_swima = xtrue -o x$imc_hcd = xtrue -o x$imv_hcd = xtrue; then
 	imcv=true;
 fi
 
@@ -916,9 +919,9 @@ if test x$gmp = xtrue; then
 		AC_COMPILE_IFELSE(
 			[AC_LANG_PROGRAM(
 				[[#include "gmp.h"]],
-				[[void *x = mpz_powm_sec;]])],
+				[[void *x  __attribute__((unused)); x = mpz_powm_sec;]])],
 			[AC_MSG_RESULT([yes]);
-			 AC_DEFINE([HAVE_MPZ_POWM_SEC], [], [have mpz_mown_sec()])],
+			 AC_DEFINE([HAVE_MPZ_POWM_SEC], [], [have mpz_powm_sec()])],
 			[AC_MSG_RESULT([no])]
 		)
 	else
@@ -995,12 +998,22 @@ if test x$tss_trousers = xtrue; then
 fi
 
 if test x$tss_tss2 = xtrue; then
-	PKG_CHECK_MODULES(tss2, [tcti-socket], [AC_DEFINE([TSS_TSS2], [], [use TSS 2.0 libraries])])
-	AC_SUBST(tss2_CFLAGS)
-	AC_SUBST(tss2_LIBS)
+	PKG_CHECK_MODULES(tss2_tabrmd, [tcti-tabrmd],
+		[tss2_tabrmd=true; AC_DEFINE([TSS2_TCTI_TABRMD], [], [use TCTI Access Broker and Resource Mamager])],
+		[tss2_tabrmd=false])
+	PKG_CHECK_MODULES(tss2_socket, [tcti-socket],
+		[tss2_socket=true; AC_DEFINE([TSS2_TCTI_SOCKET], [], [use TCTI Sockets])],
+		[tss2_socket=false])
+	if test x$tss2_tabrmd = xtrue -o x$tss2_socket = xtrue; then
+		AC_DEFINE([TSS_TSS2], [], [use TSS 2.0 libraries])
+		AC_SUBST(tss2_CFLAGS, "$tss2_tabrmd_CFLAGS $tss2_socket_CFLAGS")
+		AC_SUBST(tss2_LIBS, "$tss2_tabrmd_LIBS $tss2_socket_LIBS")
+	else
+		AC_MSG_FAILURE([no TSS2 TCTI library detected])
+	fi
 fi
 
-if test x$imv_swid = xtrue; then
+if test x$imc_swima = xtrue -o $imv_swima = xtrue -o x$imv_swid = xtrue; then
 	PKG_CHECK_MODULES(json, [json-c], [],
 		[PKG_CHECK_MODULES(json, [json])])
 	AC_SUBST(json_CFLAGS)
@@ -1240,6 +1253,18 @@ if test x$coverage = xtrue; then
 	CFLAGS="${CFLAGS} -g -O0"
 fi
 
+if test x$fuzzing = xtrue; then
+	if test x$libfuzzer = x; then
+		AC_MSG_NOTICE([fuzz targets enabled without libFuzzer, using local driver])
+		CFLAGS="${CFLAGS} -fsanitize=address"
+		libfuzzer="libFuzzerLocal.a"
+	else
+		# required for libFuzzer
+		FUZZING_LDFLAGS="-stdlib=libc++ -lstdc++"
+		AC_SUBST(FUZZING_LDFLAGS)
+	fi
+fi
+
 if test x$ruby_gems = xtrue; then
 	AC_PATH_PROG([GEM], [gem], [], [$PATH:/bin:/usr/bin:/usr/local/bin])
 	if test x$GEM = x; then
@@ -1336,7 +1361,7 @@ ADD_PLUGIN([x509],                 [s charon scepclient pki scripts attest nm cm
 ADD_PLUGIN([revocation],           [s charon pki nm cmd])
 ADD_PLUGIN([constraints],          [s charon nm cmd])
 ADD_PLUGIN([acert],                [s charon])
-ADD_PLUGIN([pubkey],               [s charon cmd aikgen])
+ADD_PLUGIN([pubkey],               [s charon pki cmd aikgen])
 ADD_PLUGIN([pkcs1],                [s charon scepclient pki scripts manager medsrv attest nm cmd aikgen fuzz])
 ADD_PLUGIN([pkcs7],                [s charon scepclient pki scripts nm cmd])
 ADD_PLUGIN([pkcs8],                [s charon scepclient pki scripts manager medsrv attest nm cmd])
@@ -1399,6 +1424,7 @@ ADD_PLUGIN([eap-sim],              [c charon])
 ADD_PLUGIN([eap-sim-file],         [c charon])
 ADD_PLUGIN([eap-sim-pcsc],         [c charon])
 ADD_PLUGIN([eap-aka],              [c charon])
+ADD_PLUGIN([eap-aka-3gpp],         [c charon])
 ADD_PLUGIN([eap-aka-3gpp2],        [c charon])
 ADD_PLUGIN([eap-simaka-sql],       [c charon])
 ADD_PLUGIN([eap-simaka-pseudonym], [c charon])
@@ -1574,6 +1600,7 @@ AM_CONDITIONAL(USE_EAP_IDENTITY, test x$eap_identity = xtrue)
 AM_CONDITIONAL(USE_EAP_MD5, test x$eap_md5 = xtrue)
 AM_CONDITIONAL(USE_EAP_GTC, test x$eap_gtc = xtrue)
 AM_CONDITIONAL(USE_EAP_AKA, test x$eap_aka = xtrue)
+AM_CONDITIONAL(USE_EAP_AKA_3GPP, test x$eap_aka_3gpp = xtrue)
 AM_CONDITIONAL(USE_EAP_AKA_3GPP2, test x$eap_aka_3gpp2 = xtrue)
 AM_CONDITIONAL(USE_EAP_MSCHAPV2, test x$eap_mschapv2 = xtrue)
 AM_CONDITIONAL(USE_EAP_TLS, test x$eap_tls = xtrue)
@@ -1604,6 +1631,8 @@ AM_CONDITIONAL(USE_IMC_ATTESTATION, test x$imc_attestation = xtrue)
 AM_CONDITIONAL(USE_IMV_ATTESTATION, test x$imv_attestation = xtrue)
 AM_CONDITIONAL(USE_IMC_SWID, test x$imc_swid = xtrue)
 AM_CONDITIONAL(USE_IMV_SWID, test x$imv_swid = xtrue)
+AM_CONDITIONAL(USE_IMC_SWIMA, test x$imc_swima = xtrue)
+AM_CONDITIONAL(USE_IMV_SWIMA, test x$imv_swima = xtrue)
 AM_CONDITIONAL(USE_IMC_HCD, test x$imc_hcd = xtrue)
 AM_CONDITIONAL(USE_IMV_HCD, test x$imv_hcd = xtrue)
 AM_CONDITIONAL(USE_SOCKET_DEFAULT, test x$socket_default = xtrue)
@@ -1703,6 +1732,9 @@ if test x$ikev2 = xtrue; then
 fi
 if test x$fuzzing = xtrue; then
 	AC_DEFINE([USE_FUZZING], [], [build code for fuzzing])
+fi
+if test x$imc_swima = xtrue -o x$imv_swima = xtrue -o x$imv_swid = xtrue ; then
+	AC_DEFINE([USE_JSON], [], [build code for JSON])
 fi
 
 # ====================================================
@@ -1830,6 +1862,8 @@ AC_CONFIG_FILES([
 	src/libimcv/plugins/imv_attestation/Makefile
 	src/libimcv/plugins/imc_swid/Makefile
 	src/libimcv/plugins/imv_swid/Makefile
+	src/libimcv/plugins/imc_swima/Makefile
+	src/libimcv/plugins/imv_swima/Makefile
 	src/libimcv/plugins/imc_hcd/Makefile
 	src/libimcv/plugins/imv_hcd/Makefile
 	src/charon/Makefile
@@ -1840,6 +1874,7 @@ AC_CONFIG_FILES([
 	src/charon-systemd/Makefile
 	src/libcharon/Makefile
 	src/libcharon/plugins/eap_aka/Makefile
+	src/libcharon/plugins/eap_aka_3gpp/Makefile
 	src/libcharon/plugins/eap_aka_3gpp2/Makefile
 	src/libcharon/plugins/eap_dynamic/Makefile
 	src/libcharon/plugins/eap_identity/Makefile
@@ -1933,6 +1968,7 @@ AC_CONFIG_FILES([
 	src/checksum/Makefile
 	src/conftest/Makefile
 	src/pt-tls-client/Makefile
+	src/sw-collector/Makefile
 	src/swanctl/Makefile
 	scripts/Makefile
 	testing/Makefile
@@ -1965,6 +2001,8 @@ AC_CONFIG_FILES([
 	src/swanctl/swanctl.8
 	src/swanctl/swanctl.conf.5.head
 	src/swanctl/swanctl.conf.5.tail
+	src/pt-tls-client/pt-tls-client.1
+	src/sw-collector/sw-collector.8
 ])
 
 AC_OUTPUT

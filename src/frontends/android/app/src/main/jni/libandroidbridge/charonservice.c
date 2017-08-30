@@ -1,8 +1,8 @@
 /*
- * Copyright (C) 2012-2015 Tobias Brunner
+ * Copyright (C) 2012-2017 Tobias Brunner
  * Copyright (C) 2012 Giuliano Grassi
  * Copyright (C) 2012 Ralf Sager
- * Hochschule fuer Technik Rapperswil
+ * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -25,6 +25,7 @@
 #include "android_jni.h"
 #include "backend/android_attr.h"
 #include "backend/android_creds.h"
+#include "backend/android_fetcher.h"
 #include "backend/android_private_key.h"
 #include "backend/android_service.h"
 #include "kernel/android_ipsec.h"
@@ -419,6 +420,11 @@ static void initiate(settings_t *settings)
 						"charon.fragment_size",
 						settings->get_int(settings, "global.mtu",
 										  ANDROID_DEFAULT_MTU));
+	/* use configured interval, or an increased default to save battery power */
+	lib->settings->set_int(lib->settings,
+						"charon.keep_alive",
+						settings->get_int(settings, "global.nat_keepalive",
+										  ANDROID_KEEPALIVE_INTERVAL));
 
 	this->creds->clear(this->creds);
 	DESTROY_IF(this->service);
@@ -475,9 +481,6 @@ static void set_options(char *logfile)
 					"charon.retransmit_timeout", ANDROID_RETRANSMIT_TIMEOUT);
 	lib->settings->set_double(lib->settings,
 					"charon.retransmit_base", ANDROID_RETRANSMIT_BASE);
-	/* increase NAT-T keepalive interval a bit to save battery power */
-	lib->settings->set_time(lib->settings,
-					"charon.keep_alive", ANDROID_KEEPALIVE_INTERVAL);
 	lib->settings->set_bool(lib->settings,
 					"charon.initiator_only", TRUE);
 	lib->settings->set_bool(lib->settings,
@@ -523,6 +526,9 @@ static void charonservice_init(JNIEnv *env, jobject service, jobject builder,
 		PLUGIN_CALLBACK(charonservice_register, NULL),
 			PLUGIN_PROVIDE(CUSTOM, "android-backend"),
 				PLUGIN_DEPENDS(CUSTOM, "libcharon"),
+		PLUGIN_REGISTER(FETCHER, android_fetcher_create),
+			PLUGIN_PROVIDE(FETCHER, "http://"),
+			PLUGIN_PROVIDE(FETCHER, "https://"),
 	};
 
 	INIT(this,
@@ -640,7 +646,8 @@ JNI_METHOD(CharonVpnService, initializeCharon, jboolean,
 	{
 		memset(&utsname, 0, sizeof(utsname));
 	}
-	DBG1(DBG_DMN, "Starting IKE charon daemon (strongSwan "VERSION", %s %s, %s)",
+	DBG1(DBG_DMN, "Starting IKE charon daemon (strongSwan "VERSION", %s, %s, "
+		 "%s %s, %s)", android_version_string, android_device_string,
 		  utsname.sysname, utsname.release, utsname.machine);
 
 #ifdef PLUGINS_BYOD

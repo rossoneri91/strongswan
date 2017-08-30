@@ -64,8 +64,15 @@ win*)
 			--enable-tnccs-20 --enable-imc-attestation --enable-imv-attestation
 			--enable-imc-os --enable-imv-os --enable-tnc-imv --enable-tnc-imc
 			--enable-pki --enable-swanctl --enable-socket-win"
-	# no make check for Windows binaries
-	TARGET=
+	# no make check for Windows binaries unless we run on a windows host
+	if test "$APPVEYOR" != "True"; then
+		TARGET=
+	else
+		CONFIG="$CONFIG --enable-openssl"
+		CFLAGS="$CFLAGS -I/c/OpenSSL-$TEST/include"
+		LDFLAGS="-L/c/OpenSSL-$TEST"
+		export LDFLAGS
+	fi
 	CFLAGS="$CFLAGS -mno-ms-bitfields"
 	DEPS="gcc-mingw-w64-base"
 	case "$TEST" in
@@ -76,7 +83,7 @@ win*)
 		DEPS="gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev $DEPS"
 		CC="x86_64-w64-mingw32-gcc"
 		# apply patch to MinGW headers
-		if test -z "$1"; then
+		if test "$APPVEYOR" != "True" -a -z "$1"; then
 			sudo patch -f -p 4 -d /usr/share/mingw-w64/include < src/libcharon/plugins/kernel_wfp/mingw-w64-4.8.1.diff
 		fi
 		;;
@@ -113,6 +120,27 @@ osx)
 	export PKG_CONFIG_PATH
 	export CPPFLAGS
 	export LDFLAGS
+	;;
+fuzzing)
+	CFLAGS="$CFLAGS -DNO_CHECK_MEMWIPE"
+	CONFIG="--enable-fuzzing --enable-static --disable-shared --disable-scripts"
+	# don't run any of the unit tests
+	export TESTS_RUNNERS=
+	# prepare corpora
+	if test -z "$1"; then
+		if test -z "$FUZZING_CORPORA"; then
+			git clone --depth 1 https://github.com/strongswan/fuzzing-corpora.git fuzzing-corpora
+			export FUZZING_CORPORA=$TRAVIS_BUILD_DIR/fuzzing-corpora
+		fi
+		# these are about the same as those on OSS-Fuzz (except for the
+		# symbolize options and strip_path_prefix)
+		export ASAN_OPTIONS=redzone=16:handle_sigill=1:strict_string_check=1:\
+			allocator_release_to_os_interval_ms=500:strict_memcmp=1:detect_container_overflow=1:\
+			coverage=0:allocator_may_return_null=1:use_sigaltstack=1:detect_stack_use_after_return=1:\
+			alloc_dealloc_mismatch=0:detect_leaks=1:print_scariness=1:max_uar_stack_size_log=16:\
+			handle_abort=1:check_malloc_usable_size=0:quarantine_size_mb=10:detect_odr_violation=0:\
+			symbolize=1:handle_segv=1:fast_unwind_on_fatal=0:external_symbolizer_path=/usr/bin/llvm-symbolizer-3.5
+	fi
 	;;
 dist)
 	TARGET=distcheck
